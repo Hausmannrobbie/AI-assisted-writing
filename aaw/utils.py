@@ -3,6 +3,7 @@ import glob
 
 import random
 import string
+import json
 
 import requests
 import openai
@@ -37,7 +38,6 @@ def get_random_string(length) -> str:
 
 
 def image_to_text(image):
-
     # Step 1: Save uploaded file
     filename = image.name
     print(f'''uploaded: {filename}''')
@@ -89,7 +89,7 @@ def image_to_text(image):
              "Passe die Fehler an: "
     total_input = prompt + '''"""''' + ocr_text + '''"""'''
 
-    text, error_msg = run_gpt3(total_input)
+    text, error_msg = run_gpt(total_input, engine="text-davinci-003")
     text = text.strip()
     return text, error_msg
 
@@ -97,29 +97,40 @@ def image_to_text(image):
 def ocr(image_name: str, num_requests=1) -> str:
     output_text = []
 
+    # Very important that Mathpix does not save the data
+    options_json = json.dumps({"metadata": {"improve_mathpix": False}})
+
     for i in range(num_requests):
         r = requests.post("https://api.mathpix.com/v3/text",
-                                 files={"file": open("tmp/" + image_name + str(i) + '.jpg', "rb")},
-                                 headers={
+                          files={"file": open("tmp/" + image_name + str(i) + '.jpg', "rb")},
+                          data={"options_json": options_json},
+                          headers={
                               "app_id": APIs["ocr_app_id"],
-                              "app_key": APIs["ocr_app_key"]
-                          }
-                                 )
+                              "app_key": APIs["ocr_app_key"],
+                          },
+                          )
         output_text.append(r.json()["text"])
 
     total_output = " ".join(output_text)
     return total_output
 
-def run_gpt3(prompt: str, engine="text-davinci-003", max_tokens=1000, error_tmp=None):
+
+def run_gpt(prompt: str, engine="text-davinci-003", max_tokens=1000, error_tmp=None):
+    print("using engine " + engine)
+
     openai.api_key = APIs["openai"]
 
     exception = None
     # create a completion
     for i in range(10):
         try:
-            completion = openai.Completion.create(engine=engine, prompt=prompt, max_tokens=max_tokens)
-            # return the completion
-            return completion.choices[0].text, None
+            if engine.startswith("text-davinci"):
+                return run_gpt3(engine=engine, prompt=prompt, max_tokens=max_tokens), None
+            elif engine.startswith("gpt-"):
+                return run_chatgpt(engine=engine, prompt=prompt, max_tokens=max_tokens), None
+            else:
+                print("Unknown engine " + engine + "!")
+                return "", None
         except InvalidRequestError as ire:
             # If this happens directly stop trying and return
             print("####  Invalid Request!  ####")
@@ -139,3 +150,19 @@ def run_gpt3(prompt: str, engine="text-davinci-003", max_tokens=1000, error_tmp=
 
     return "", exception
 
+
+def run_gpt3(prompt: str, engine="text-davinci-003", max_tokens=1000):
+    completion = openai.Completion.create(engine=engine, prompt=prompt, max_tokens=max_tokens)
+    # return the completion
+    return completion.choices[0].text
+
+
+def run_chatgpt(prompt: str, engine="gpt-3.5-turbo", max_tokens=1000):
+    completion = openai.ChatCompletion.create(
+        model=engine,
+        messages=[
+            # {"role": "system", "content": "You are a helpful teacher."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return completion['choices'][0]['message']['content']
